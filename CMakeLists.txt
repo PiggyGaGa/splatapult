@@ -10,6 +10,7 @@ set(PROJECT_NAME splatapult)
 project(${PROJECT_NAME} LANGUAGES CXX)
 
 option(SHIPPING "Build for shipping" OFF)
+option(ENABLE_OPENXR "Enable OpenXR VR support" OFF)
 
 if(UNIX)
     find_package(X11 REQUIRED)
@@ -54,7 +55,10 @@ else()
 endif()
 
 # openxr-loader
-find_package(OpenXR CONFIG REQUIRED)
+if(ENABLE_OPENXR)
+    find_package(OpenXR CONFIG REQUIRED)
+    set(SPLATAPULT_OPENXR_LIBRARIES OpenXR::headers OpenXR::openxr_loader)
+endif()
 
 # src
 include_directories(src)
@@ -70,7 +74,6 @@ add_executable(${PROJECT_NAME}
     src/core/util.cpp
     src/core/vertexbuffer.cpp
     src/core/textrenderer.cpp
-    src/core/xrbuddy.cpp
 
     src/app.cpp
     src/camerasconfig.cpp
@@ -85,6 +88,11 @@ add_executable(${PROJECT_NAME}
     src/splatrenderer.cpp
     src/vrconfig.cpp
 )
+
+if(ENABLE_OPENXR)
+    target_sources(${PROJECT_NAME} PRIVATE src/core/xrbuddy.cpp)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE SPLATAPULT_ENABLE_OPENXR)
+endif()
 
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
 
@@ -104,8 +112,7 @@ if(WIN32)
             PNG::PNG
             nlohmann_json::nlohmann_json
             Eigen3::Eigen
-            OpenXR::headers
-            OpenXR::openxr_loader
+            ${SPLATAPULT_OPENXR_LIBRARIES}
         )
     else()
         target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -118,8 +125,7 @@ if(WIN32)
             nlohmann_json::nlohmann_json
             Eigen3::Eigen
             Tracy::TracyClient
-            OpenXR::headers
-            OpenXR::openxr_loader
+            ${SPLATAPULT_OPENXR_LIBRARIES}
         )
     endif()
 else()
@@ -132,8 +138,7 @@ else()
         PNG::PNG
         # nlohmann_json::nlohmann_json
         Eigen3::Eigen
-        OpenXR::headers
-        OpenXR::openxr_loader
+        ${SPLATAPULT_OPENXR_LIBRARIES}
         ${X11_LIBRARIES}
     )
 endif()

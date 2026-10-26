@@ -32,7 +32,9 @@
 #include "core/textrenderer.h"
 #include "core/texture.h"
 #include "core/util.h"
+#ifdef SPLATAPULT_ENABLE_OPENXR
 #include "core/xrbuddy.h"
+#endif
 
 #include "camerasconfig.h"
 #include "camerapathrenderer.h"
@@ -310,7 +312,12 @@ App::ParseResult App::ParseArguments(int argc, const char* argv[])
 
     if (options[OPENXR])
     {
+#ifdef SPLATAPULT_ENABLE_OPENXR
         opt.vrMode = true;
+#else
+        Log::E("OpenXR support is disabled in this build. Rebuild with -DENABLE_OPENXR=ON.\n");
+        return ERROR_RESULT;
+#endif
     }
 
     if (options[FULLSCREEN])
@@ -398,6 +405,12 @@ bool App::Init()
         return false;
     }
 
+    axesRenderer = std::make_shared<DebugRenderer>();
+    if (!axesRenderer->Init())
+    {
+        return false;
+    }
+
     textRenderer = std::make_shared<TextRenderer>();
     if (!textRenderer->Init("font/JetBrainsMono-Medium.json", "font/JetBrainsMono-Medium.png"))
     {
@@ -407,12 +420,14 @@ bool App::Init()
 
     if (opt.vrMode)
     {
+#ifdef SPLATAPULT_ENABLE_OPENXR
         xrBuddy = std::make_shared<XrBuddy>(mainContext, glm::vec2(Z_NEAR, Z_FAR));
         if (!xrBuddy->Init())
         {
             Log::E("OpenXR Init failed\n");
             return false;
         }
+    #endif
     }
 
     std::string camerasConfigFilename = FindConfigFile(plyFilename, "cameras.json");
@@ -560,6 +575,7 @@ bool App::Init()
 
     if (opt.vrMode)
     {
+#ifdef SPLATAPULT_ENABLE_OPENXR
         desktopProgram = std::make_shared<Program>();
         std::string defines = "#define USE_SUPERSAMPLING\n";
         desktopProgram->AddMacro("DEFINES", defines);
@@ -607,6 +623,7 @@ bool App::Init()
                 splatRenderer->Render(fullEyeMat, projMat, viewport, nearFar);
             }
         });
+    #endif
     }
 
     if (!opt.vrMode && opt.frameBuffer != Options::FrameBuffer::Default)
@@ -878,6 +895,7 @@ bool App::Process(float dt)
 {
     if (opt.vrMode)
     {
+#ifdef SPLATAPULT_ENABLE_OPENXR
         if (!xrBuddy->PollEvents())
         {
             Log::E("xrBuddy PollEvents failed\n");
@@ -946,6 +964,7 @@ bool App::Process(float dt)
         xrBuddy->GetActionBool("r_squeeze_click", &buttonState.rightGrip, &valid, &changed);
         magicCarpet->Process(headPose, leftPose, rightPose, leftStick + leftTrackpadStick,
                              rightStick + rightTrackpadStick, buttonState, dt);
+    #endif
     }
 #ifdef USE_SDL
 
@@ -969,6 +988,7 @@ bool App::Render(float dt, const glm::ivec2& windowSize)
 
     if (opt.vrMode)
     {
+#ifdef SPLATAPULT_ENABLE_OPENXR
         if (xrBuddy->SessionReady())
         {
             if (!xrBuddy->RenderFrame())
@@ -994,6 +1014,7 @@ bool App::Render(float dt, const glm::ivec2& windowSize)
             textRenderer->Render(glm::mat4(1.0f), projMat, viewport, nearFar);
         }
 #endif
+    #endif
     }
     else
     {
@@ -1080,6 +1101,57 @@ bool App::Render(float dt, const glm::ivec2& windowSize)
             Clear(windowSize, true);
             RenderDesktop(windowSize, desktopProgram, fbo->GetColorTexture()->texture, false);
         }
+    }
+
+    // Draw overlays after the float framebuffer has been resolved to the window.
+    if (!opt.vrMode && width > 0 && height > 0)
+    {
+        GLint oldViewport[4];
+        glGetIntegerv(GL_VIEWPORT, oldViewport);
+        GLboolean oldDepth = glIsEnabled(GL_DEPTH_TEST);
+        GLboolean oldBlend = glIsEnabled(GL_BLEND);
+        GLfloat oldLineWidth;
+        glGetFloatv(GL_LINE_WIDTH, &oldLineWidth);
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_BLEND);
+        glLineWidth(1.0f);
+        glm::mat4 camera = flyCam->GetCameraMat();
+        glm::vec2 nearFar(Z_NEAR, Z_FAR);
+        glm::vec4 fullViewport(0, 0, width, height);
+        glViewport(0, 0, width, height);
+        axesRenderer->Transform(glm::mat4(1.0f), 1.0f);
+        axesRenderer->Render(camera,
+            glm::perspective(FOVY, (float)width / height, Z_NEAR, Z_FAR), fullViewport, nearFar);
+        axesRenderer->EndFrame();
+
+        // Bottom-left orientation widget: world axes transformed into camera space.
+        int side = glm::min(160, glm::min(width, height));
+        glViewport(0, 0, side, side);
+        glm::mat3 worldToCamera = glm::transpose(glm::mat3(camera));
+        const glm::vec3 colors[] = {{1, 0.2f, 0.2f}, {0.2f, 1, 0.2f}, {0.3f, 0.6f, 1}};
+        for (int i = 0; i < 3; ++i)
+        {
+            glm::vec3 axis(0.0f);
+            axis[i] = 1.0f;
+            glm::vec3 end = worldToCamera * axis * 0.65f;
+            axesRenderer->Line(glm::vec3(0), end, colors[i]);
+            // Camera-facing stroke labels X/Y/Z at each positive endpoint.
+            auto line = [&](float ax, float ay, float bx, float by)
+            {
+                axesRenderer->Line(end + glm::vec3(ax, ay, 0),
+                                   end + glm::vec3(bx, by, 0), colors[i]);
+            };
+            if (i == 0) { line(-.05f,-.05f,.05f,.05f); line(-.05f,.05f,.05f,-.05f); }
+            if (i == 1) { line(-.05f,.05f,0,0); line(.05f,.05f,0,0); line(0,0,0,-.06f); }
+            if (i == 2) { line(-.05f,.05f,.05f,.05f); line(.05f,.05f,-.05f,-.05f); line(-.05f,-.05f,.05f,-.05f); }
+        }
+        axesRenderer->Render(glm::mat4(1), glm::ortho(-1.f, 1.f, -1.f, 1.f, -2.f, 2.f),
+                             glm::vec4(0, 0, side, side), nearFar);
+        axesRenderer->EndFrame();
+        glViewport(oldViewport[0], oldViewport[1], oldViewport[2], oldViewport[3]);
+        glLineWidth(oldLineWidth);
+        if (oldDepth) glEnable(GL_DEPTH_TEST);
+        if (oldBlend) glEnable(GL_BLEND);
     }
 
     debugRenderer->EndFrame();

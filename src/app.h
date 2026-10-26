@@ -83,6 +83,7 @@ protected:
     Options opt;
     std::string plyFilename;
     std::shared_ptr<DebugRenderer> debugRenderer;
+    std::shared_ptr<DebugRenderer> axesRenderer;
     std::shared_ptr<CameraPathRenderer> cameraPathRenderer;
     std::shared_ptr<TextRenderer> textRenderer;
     std::shared_ptr<XrBuddy> xrBuddy;
